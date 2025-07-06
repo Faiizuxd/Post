@@ -2,6 +2,7 @@ from flask import Flask, request, render_template_string
 import requests
 import re
 import time
+import os
 
 app = Flask(__name__)
 
@@ -12,8 +13,8 @@ HTML_FORM = """
     <title>Z0H Z0H WALL TOOL</title>
     <style>
         body {
-            background-color: #000000;
-            color: #00ff00;
+            background-color: #000;
+            color: #0f0;
             font-family: monospace;
             padding: 30px;
         }
@@ -72,48 +73,46 @@ HTML_FORM = """
 """
 
 def extract_target_id(url):
+    """Extracts Facebook post ID or pfbid"""
     if url.startswith("pfbid"):
         return url.split('/')[0]
     match = re.search(r'pfbid\w+|\d+', url)
     return match.group(0) if match else None
 
-def get_profile_info(token_eaag):
+def get_eaag_token(cookie):
+    """Gets EAAG token from business.facebook.com"""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 11; Mobile) AppleWebKit/537.36 Chrome/103.0 Mobile Safari/537.36 [FB_IAB/FB4A;FBAV/375.1.0.28.111;]'
+    }
     try:
-        response = requests.get(f"https://graph.facebook.com/me?fields=id,name&access_token={token_eaag}")
-        profile_info = response.json()
-        return profile_info.get("name"), profile_info.get("id")
+        res = requests.get('https://business.facebook.com/business_locations', headers=headers, cookies={'Cookie': cookie})
+        token_match = re.search(r'(EAAG\w+)', res.text)
+        return token_match.group(1) if token_match else None
     except:
-        return None, None
+        return None
 
 @app.route("/", methods=["GET", "POST"])
 def index():
     result_log = ""
     if request.method == "POST":
-        post_url = request.form["post_url"]
-        hater_name = request.form["name"]
-        delay = int(request.form["delay"])
-        cookie = request.form["cookie"]
-        comment_text = request.form["comments"]
+        post_url = request.form.get("post_url", "").strip()
+        hater_name = request.form.get("name", "").strip()
+        delay = int(request.form.get("delay", "2"))
+        cookie = request.form.get("cookie", "").strip()
+        comment_text = request.form.get("comments", "").strip()
 
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 11; Mobile) AppleWebKit/537.36 Chrome/103.0 Mobile Safari/537.36 [FB_IAB/FB4A;FBAV/375.1.0.28.111;]'
-        }
+        if not all([post_url, hater_name, cookie, comment_text]):
+            return render_template_string(HTML_FORM, result="[!] Please fill in all fields.")
 
-        res = requests.get('https://business.facebook.com/business_locations', headers=headers, cookies={'Cookie': cookie})
-        token_match = re.search(r'(EAAG\w+)', res.text)
-        if not token_match:
-            result_log += "[!] EAAG token not found in cookie response.\n"
-            return render_template_string(HTML_FORM, result=result_log)
+        token = get_eaag_token(cookie)
+        if not token:
+            return render_template_string(HTML_FORM, result="[!] EAAG token not found. Invalid or expired cookie.")
 
-        token = token_match.group(1)
         target_id = extract_target_id(post_url)
-
         if not target_id:
-            result_log += "[!] Invalid post URL or ID not found.\n"
-            return render_template_string(HTML_FORM, result=result_log)
+            return render_template_string(HTML_FORM, result="[!] Invalid Facebook post URL.")
 
         comments = comment_text.splitlines()
-
         for idx, line in enumerate(comments):
             comment = f"{hater_name}: {line.strip()}"
             data = {
@@ -131,7 +130,9 @@ def index():
             except Exception as e:
                 result_log += f"[{idx+1}] ❌ Error: {e}\n"
                 time.sleep(3)
+
     return render_template_string(HTML_FORM, result=result_log)
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    port = int(os.environ.get("PORT", 5000))  # Compatible with Render/Heroku
+    app.run(debug=True, host="0.0.0.0", port=port)
